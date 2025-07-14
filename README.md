@@ -1,4 +1,5 @@
 # ShipIT - Decentralized Delivery Platform
+![shipit idea image](https://github.com/user-attachments/assets/b3dcb942-7f44-4e4b-86ae-70439577d504)
 
 ShipIT is a full-stack decentralized application that facilitates a secure and transparent parcel delivery service using a blockchain-based escrow system. The platform connects senders, carriers, and receivers, ensuring that payments are held in escrow and released only upon successful delivery.
 
