@@ -216,7 +216,7 @@ const DriverDashboard: React.FC = () => {
     const intervalId = setInterval(() => {
       fetchAvailableParcels(false);
       fetchAcceptedParcels(); // Also refresh accepted parcels
-    }, 30000); // Poll every 30 seconds
+    }, 60000); // Poll every 30 seconds
 
     return () => clearInterval(intervalId);
   }, [isConnected]);
