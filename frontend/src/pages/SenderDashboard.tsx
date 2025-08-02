@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Package, Plus, Clock, CheckCircle, Truck, MapPin, User, Phone, ExternalLink, DollarSign } from 'lucide-react';
+import { Package, Plus, Clock, CheckCircle, Truck, MapPin, User, Phone, ExternalLink, Eye } from 'lucide-react';
 import { useWallet } from '../contexts/WalletContext';
+import ProofViewer from '../components/ProofViewer';
+import toast from 'react-hot-toast';
 
 interface Parcel {
   id: string;
@@ -17,20 +19,24 @@ interface Parcel {
   transactionHash?: string;
   escrowAmount?: string;
   fundsReleased?: boolean;
-  driver?: {
-    name: string;
-    vehicle: string;
-    phone: string;
-    rating: number;
-    address?: string;
-  };
+  proofPhoto?: string;
+  proofUploadTime?: string;
+  driverName?: string;
+  driverPhone?: string;
+  driverCarNumber?: string;
+  driverVehicle?: string;
+  driverRating?: number;
+  driverAddress?: string;
 }
 
 const SenderDashboard: React.FC = () => {
   const { account, getUserDeliveries, confirmDelivery, isConnected } = useWallet();
   const [parcels, setParcels] = useState<Parcel[]>([]);
   const [loading, setLoading] = useState(true);
+  const [, setError] = useState<string | null>(null);
   const [releasingFunds, setReleasingFunds] = useState<string | null>(null);
+  const [showProofViewer, setShowProofViewer] = useState(false);
+  const [selectedParcelForProof, setSelectedParcelForProof] = useState<Parcel | null>(null);
   const [releasedFunds, setReleasedFunds] = useState<Set<string>>(new Set()); // Track released funds locally
 
   const getStatusColor = (status: string) => {
@@ -53,50 +59,88 @@ const SenderDashboard: React.FC = () => {
     }
   };
 
-  // Fetch user deliveries from blockchain
+  // Fetch user deliveries from blockchain and MongoDB
   const fetchUserDeliveries = async () => {
-    if (!isConnected || !account) {
-      setLoading(false);
-      return;
-    }
+    if (!isConnected || !account) return;
 
     try {
       setLoading(true);
+      setError(null);
+
+      // Fetch deliveries from blockchain
       const deliveries = await getUserDeliveries();
       
-      // Transform blockchain data to match UI interface
-      const transformedParcels: Parcel[] = deliveries
-        .filter((delivery: any) => delivery && delivery.id)
-        .map((delivery: any) => {
-          const deliveryId = delivery.id.toString();
-          const hasReleasedFunds = releasedFunds.has(deliveryId) || parseFloat(delivery.escrowAmount || '0') === 0;
-          
-          return {
-            id: deliveryId,
-            deliveryId: deliveryId,
-            from: delivery.fromAddress || 'Unknown',
-            to: delivery.toAddress || 'Unknown',
-            item: delivery.itemDescription || 'Unknown Item',
-            size: 'medium',
-            fee: Math.round(parseFloat(delivery.deliveryFee || '0') * 3333),
-            status: getStatusFromBlockchain(delivery.status || 0),
-            createdAt: new Date(),
-            transactionHash: delivery.transactionHash,
-            escrowAmount: delivery.escrowAmount,
-            fundsReleased: hasReleasedFunds, // Check both local state and escrow amount
-            driver: delivery.driver && delivery.driver !== '0x0000000000000000000000000000000000000000' ? {
-              name: `Driver ${delivery.driver.slice(0, 6)}...${delivery.driver.slice(-4)}`,
-              vehicle: 'Vehicle Info',
-              phone: '+91 XXXXX XXXXX',
-              rating: 4.5,
-              address: delivery.driver
-            } : undefined
-          };
-        });
+      // Fetch proof photos from MongoDB for each delivery
+      const deliveriesWithProof = await Promise.all(
+        deliveries.map(async (delivery: any) => {
+          try {
+            // Fetch parcel data by deliveryId from MongoDB
+            const response = await fetch(`http://localhost:5006/api/parcels/${delivery.id.toString()}`);
+            const mongoData = response.ok ? await response.json() : {};
+            
+            return {
+              id: delivery.id.toString(),
+              deliveryId: delivery.id.toString(),
+              from: delivery.fromAddress || 'Unknown',
+              to: delivery.toAddress || 'Unknown',
+              item: delivery.itemDescription || 'Unknown Item',
+              size: 'medium' as const,
+              fee: Math.round(parseFloat(delivery.deliveryFee || '0') * 3333),
+              status: getStatusFromBlockchain(delivery.status || 0),
+              createdAt: new Date(),
+              transactionHash: delivery.transactionHash,
+              escrowAmount: delivery.escrowAmount,
+              fundsReleased: parseFloat(delivery.escrowAmount || '0') === 0,
+              driverName: delivery.driver && delivery.driver !== '0x0000000000000000000000000000000000000000' 
+                ? `Driver ${delivery.driver.slice(0, 6)}...${delivery.driver.slice(-4)}` 
+                : undefined,
+              driverAddress: delivery.driver && delivery.driver !== '0x0000000000000000000000000000000000000000' 
+                ? delivery.driver 
+                : undefined,
+              driverVehicle: 'Vehicle Info',
+              driverPhone: '+91 XXXXX XXXXX',
+              driverRating: 4.5,
+              driverCarNumber: 'XXXX',
+              // Merge MongoDB proof data
+              proofPhoto: mongoData.proofPhoto || '',
+              proofUploadTime: mongoData.proofUploadTime || ''
+            };
+          } catch (error) {
+            console.error(`Error fetching proof for ${delivery.id}:`, error);
+            return {
+              id: delivery.id.toString(),
+              deliveryId: delivery.id.toString(),
+              from: delivery.fromAddress || 'Unknown',
+              to: delivery.toAddress || 'Unknown',
+              item: delivery.itemDescription || 'Unknown Item',
+              size: 'medium' as const,
+              fee: Math.round(parseFloat(delivery.deliveryFee || '0') * 3333),
+              status: getStatusFromBlockchain(delivery.status || 0),
+              createdAt: new Date(),
+              transactionHash: delivery.transactionHash,
+              escrowAmount: delivery.escrowAmount,
+              fundsReleased: parseFloat(delivery.escrowAmount || '0') === 0,
+              driverName: delivery.driver && delivery.driver !== '0x0000000000000000000000000000000000000000' 
+                ? `Driver ${delivery.driver.slice(0, 6)}...${delivery.driver.slice(-4)}` 
+                : undefined,
+              driverAddress: delivery.driver && delivery.driver !== '0x0000000000000000000000000000000000000000' 
+                ? delivery.driver 
+                : undefined,
+              driverVehicle: 'Vehicle Info',
+              driverPhone: '+91 XXXXX XXXXX',
+              driverRating: 4.5,
+              driverCarNumber: 'XXXX',
+              proofPhoto: '',
+              proofUploadTime: ''
+            };
+          }
+        })
+      );
 
-      setParcels(transformedParcels);
-    } catch (error) {
+      setParcels(deliveriesWithProof);
+    } catch (error: any) {
       console.error('Error fetching user deliveries:', error);
+      setError('Failed to fetch parcels');
     } finally {
       setLoading(false);
     }
@@ -141,26 +185,32 @@ const SenderDashboard: React.FC = () => {
           : p
       ));
 
-      alert(`Funds released successfully! Transaction: ${result.transactionHash}`);
+      toast.success(`Funds released successfully! Transaction: ${result.transactionHash}`);
       
-    } catch (error: any) {
-      console.error('Error releasing funds:', error);
+    } catch (err: any) {
+      console.error('Error releasing funds:', err);
       
       let errorMessage = 'Failed to release funds. ';
-      if (error.message.includes('Only sender can call')) {
+      if (err.message.includes('Only sender can call')) {
         errorMessage += 'You are not authorized to release funds for this delivery.';
-      } else if (error.message.includes('user rejected')) {
+      } else if (err.message.includes('user rejected')) {
         errorMessage += 'Transaction was rejected.';
-      } else if (error.message.includes('Delivery must be marked as delivered first')) {
+      } else if (err.message.includes('Delivery must be marked as delivered first')) {
         errorMessage += 'The delivery must be marked as delivered by the driver first.';
       } else {
-        errorMessage += error.message || 'Please try again.';
+        errorMessage += err.message || 'Please try again.';
       }
       
-      alert(errorMessage);
+      setError(err.message);
+      toast.error(errorMessage);
     } finally {
       setReleasingFunds(null);
     }
+  };
+
+  const handleViewProof = (parcel: Parcel) => {
+    setSelectedParcelForProof(parcel);
+    setShowProofViewer(true);
   };
 
   useEffect(() => {
@@ -293,7 +343,7 @@ const SenderDashboard: React.FC = () => {
                         </div>
                       </div>
 
-                      {parcel.driver && (
+                      {(parcel.driverName || parcel.driverPhone || parcel.driverVehicle) && (
                         <div className="bg-gray-700/50 rounded-lg p-4 mb-4">
                           <h4 className="text-sm font-semibold text-white mb-2 flex items-center">
                             <Truck className="h-4 w-4 mr-2 text-blue-400" />
@@ -302,20 +352,20 @@ const SenderDashboard: React.FC = () => {
                           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
                             <div className="flex items-center space-x-2">
                               <User className="h-4 w-4 text-gray-400" />
-                              <span className="text-gray-300">{parcel.driver.name}</span>
+                              <span className="text-gray-300">{parcel.driverName}</span>
                             </div>
                             <div className="flex items-center space-x-2">
                               <Truck className="h-4 w-4 text-gray-400" />
-                              <span className="text-gray-300">{parcel.driver.vehicle}</span>
+                              <span className="text-gray-300">{parcel.driverVehicle} {parcel.driverCarNumber}</span>
                             </div>
                             <div className="flex items-center space-x-2">
                               <Phone className="h-4 w-4 text-gray-400" />
-                              <span className="text-gray-300">{parcel.driver.phone}</span>
+                              <span className="text-gray-300">{parcel.driverPhone}</span>
                             </div>
                           </div>
                           <div className="mt-2 flex items-center space-x-1">
                             <span className="text-yellow-400">★</span>
-                            <span className="text-sm text-gray-300">{parcel.driver.rating}/5.0</span>
+                            <span className="text-sm text-gray-300">{parcel.driverRating}/5.0</span>
                           </div>
                         </div>
                       )}
@@ -349,27 +399,26 @@ const SenderDashboard: React.FC = () => {
                       )}
                       
                       {/* Fund Release Button - Only show if not released */}
-                      {parcel.status === 'delivered' && parcel.driver && !parcel.fundsReleased && (
-                        <div className="mt-3">
-                          <button
-                            onClick={() => handleReleaseFunds(parcel)}
-                            disabled={releasingFunds === parcel.id}
-                            className="bg-gradient-to-r from-green-500 to-blue-600 hover:from-green-600 hover:to-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold py-2 px-4 rounded-lg transition-all duration-200 flex items-center space-x-1"
-                          >
-                            {releasingFunds === parcel.id ? (
-                              <>
-                                <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
-                                <span>Releasing...</span>
-                              </>
-                            ) : (
-                              <>
-                                <DollarSign className="h-3 w-3" />
-                                <span>Release Funds</span>
-                              </>
-                            )}
-                          </button>
-                          <div className="text-xs text-gray-500 mt-1">
-                            To: {parcel.driver.address?.slice(0, 6)}...{parcel.driver.address?.slice(-4)}
+                      {parcel.status === 'delivered' && (parcel.driverName || parcel.driverAddress) && !parcel.fundsReleased && (
+                        <div>
+                          <div className="flex space-x-2">
+                            <button
+                              onClick={() => handleViewProof(parcel)}
+                              className="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors duration-200 flex items-center justify-center space-x-2"
+                            >
+                              <Eye className="h-4 w-4" />
+                              <span>View Proof</span>
+                            </button>
+                            <button
+                              onClick={() => handleReleaseFunds(parcel)}
+                              disabled={releasingFunds === parcel.id}
+                              className="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-green-800 text-white px-4 py-2 rounded-lg transition-colors duration-200"
+                            >
+                              {releasingFunds === parcel.id ? 'Releasing...' : 'Release Funds'}
+                            </button>
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            To: {parcel.driverAddress?.slice(0, 6)}...{parcel.driverAddress?.slice(-4)}
                           </div>
                         </div>
                       )}
@@ -381,7 +430,7 @@ const SenderDashboard: React.FC = () => {
                             ✓ Funds Released
                           </div>
                           <div className="text-xs text-gray-500 mt-1">
-                            To: {parcel.driver?.address?.slice(0, 6)}...{parcel.driver?.address?.slice(-4)}
+                            To: {parcel.driverAddress?.slice(0, 6)}...{parcel.driverAddress?.slice(-4)}
                           </div>
                         </div>
                       )}
@@ -401,6 +450,20 @@ const SenderDashboard: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Proof Viewer Modal */}
+      {showProofViewer && selectedParcelForProof && (
+        <ProofViewer
+          parcelId={selectedParcelForProof.id}
+          proofPhoto={selectedParcelForProof.proofPhoto || ''}
+          proofUploadTime={selectedParcelForProof.proofUploadTime || ''}
+          onClose={() => {
+            setShowProofViewer(false);
+            setSelectedParcelForProof(null);
+          }}
+          onReleaseFunds={() => handleReleaseFunds(selectedParcelForProof)}
+        />
+      )}
     </div>
   );
 };

@@ -1,31 +1,141 @@
 import { Request, Response } from 'express';
+import mongoose from 'mongoose';
 import Parcel from '../models/parcelModel';
 
-// @desc    Create a new parcel
+// @desc    Store blockchain parcel in MongoDB
+// @route   POST /api/parcels/store
+// @access  Public
+export const storeParcelInDB = async (req: Request, res: Response) => {
+    try {
+        const { 
+            senderAddress,
+            senderName,
+            senderPhone,
+            senderEmail,
+            fromAddress,
+            toAddress,
+            itemDescription,
+            itemValue,
+            sizeTier,
+            feeInINR,
+            escrowAmountInAVAX,
+            escrowContractAddress,
+            transactionHash,
+            deliveryId,
+            senderPhoto
+        } = req.body;
+
+        // Create parcel data for MongoDB storage
+        const parcelData = {
+            senderAddress,
+            senderName,
+            senderPhone,
+            senderEmail,
+            fromAddress,
+            toAddress,
+            itemDescription,
+            itemValue: parseInt(itemValue) || 0,
+            sizeTier: sizeTier || 'Medium',
+            feeInINR: parseInt(feeInINR) || 0,
+            escrowAmountInAVAX: parseFloat(escrowAmountInAVAX) || 0,
+            escrowContractAddress,
+            transactionHash,
+            deliveryId,
+            senderPhoto,
+            status: 'pending',
+            blockchainStatus: 0,
+            lastUpdated: new Date(),
+            createdAt: new Date()
+        };
+
+        const parcel = new Parcel(parcelData);
+        const savedParcel = await parcel.save();
+        
+        const parcelObj = savedParcel.toObject();
+        
+        console.log('✅ Parcel stored in MongoDB:', {
+            mongoId: (parcelObj._id as any).toString(),
+            deliveryId: savedParcel.deliveryId,
+            transactionHash: savedParcel.transactionHash
+        });
+
+        res.status(201).json({
+            success: true,
+            parcel: {
+                ...parcelObj,
+                id: (parcelObj._id as any).toString(),
+                _id: (parcelObj._id as any).toString()
+            }
+        });
+    } catch (error: any) {
+        console.error('❌ Error storing parcel:', error);
+        res.status(500).json({ message: 'Failed to store parcel', error: error.message });
+    }
+};
+
+// @desc    Create a new parcel (legacy endpoint)
 // @route   POST /api/parcels
 // @access  Public
 export const createParcel = async (req: Request, res: Response) => {
     try {
-        // Add blockchain integration data
+        const { 
+            senderAddress, 
+            senderName, 
+            senderPhone, 
+            senderEmail,
+            fromAddress, 
+            toAddress, 
+            itemDescription, 
+            itemValue,
+            sizeTier,
+            feeInINR,
+            escrowAmountInAVAX,
+            escrowContractAddress,
+            transactionHash,
+            deliveryId,
+            senderPhoto
+        } = req.body;
+
         const parcelData = {
-            ...req.body,
+            senderAddress,
+            senderName,
+            senderPhone,
+            senderEmail,
+            fromAddress,
+            toAddress,
+            itemDescription,
+            itemValue: parseInt(itemValue) || 0,
+            sizeTier,
+            feeInINR: parseInt(feeInINR) || 0,
+            escrowAmountInAVAX: parseFloat(escrowAmountInAVAX) || 0,
+            escrowContractAddress,
+            transactionHash,
+            deliveryId,
+            senderPhoto,
+            status: 'pending',
+            blockchainStatus: 0,
             lastUpdated: new Date(),
-            blockchainStatus: 0, // Pending status
+            createdAt: new Date()
         };
 
         const parcel = new Parcel(parcelData);
-        const newParcel = await parcel.save();
+        const savedParcel = await parcel.save();
         
-        console.log('Parcel created with blockchain integration:', {
-            id: newParcel._id,
-            deliveryId: newParcel.deliveryId,
-            transactionHash: newParcel.transactionHash,
-            senderAddress: newParcel.senderAddress
+        const parcelObject = savedParcel.toObject();
+        const parcelId = savedParcel._id as mongoose.Types.ObjectId;
+        
+        console.log('✅ Parcel stored in MongoDB:', {
+            mongoId: parcelId.toString(),
+            deliveryId: savedParcel.deliveryId,
+            transactionHash: savedParcel.transactionHash
         });
 
-        res.status(201).json(newParcel);
+        res.status(201).json({
+            ...parcelObject,
+            id: parcelId.toString()
+        });
     } catch (error: any) {
-        console.error('Error creating parcel:', error);
+        console.error('❌ Error storing parcel:', error);
         res.status(500).json({ message: 'Server Error', error: error.message });
     }
 };
@@ -35,7 +145,20 @@ export const createParcel = async (req: Request, res: Response) => {
 // @access  Public
 export const getParcel = async (req: Request, res: Response) => {
     try {
-        const parcel = await Parcel.findById(req.params.id);
+        const { id } = req.params;
+        
+        // Find parcel by deliveryId (primary) or _id (fallback)
+        let parcel = await Parcel.findOne({ deliveryId: id });
+        
+        // Fallback to ObjectId if deliveryId lookup fails
+        if (!parcel) {
+            try {
+                parcel = await Parcel.findById(id);
+            } catch (error) {
+                // Invalid ObjectId format
+            }
+        }
+        
         if (parcel) {
             res.json(parcel);
         } else {
@@ -68,7 +191,17 @@ export const getAvailableParcels = async (req: Request, res: Response) => {
 
         console.log('Found available parcels:', parcels.length);
 
-        res.json(parcels);
+        // Return parcels with MongoDB ObjectId
+        const parcelsWithId = parcels.map(parcel => {
+            const parcelObj = parcel.toObject();
+            return {
+                ...parcelObj,
+                id: (parcelObj._id as any).toString(),
+                _id: (parcelObj._id as any).toString()
+            };
+        });
+
+        res.json(parcelsWithId);
     } catch (error: any) {
         console.error('Error fetching available parcels:', error);
         res.status(500).json({ message: 'Server Error', error: error.message });
@@ -85,7 +218,18 @@ export const getParcelsByDriver = async (req: Request, res: Response) => {
         }).sort({ lastUpdated: -1 });
         
         console.log(`Found ${parcels.length} parcels for driver:`, req.params.driverAddress);
-        res.json(parcels);
+        
+        // Return parcels with MongoDB ObjectId
+        const parcelsWithId = parcels.map(parcel => {
+            const parcelObj = parcel.toObject();
+            return {
+                ...parcelObj,
+                id: (parcelObj._id as any).toString(),
+                _id: (parcelObj._id as any).toString()
+            };
+        });
+        
+        res.json(parcelsWithId);
     } catch (error: any) {
         console.error('Error fetching driver parcels:', error);
         res.status(500).json({ message: 'Server Error', error: error.message });
@@ -102,7 +246,18 @@ export const getParcelsBySender = async (req: Request, res: Response) => {
         }).sort({ lastUpdated: -1 });
         
         console.log(`Found ${parcels.length} parcels for sender:`, req.params.senderAddress);
-        res.json(parcels);
+        
+        // Return parcels with MongoDB ObjectId
+        const parcelsWithId = parcels.map(parcel => {
+            const parcelObj = parcel.toObject();
+            return {
+                ...parcelObj,
+                id: (parcelObj._id as any).toString(),
+                _id: (parcelObj._id as any).toString()
+            };
+        });
+        
+        res.json(parcelsWithId);
     } catch (error: any) {
         console.error('Error fetching sender parcels:', error);
         res.status(500).json({ message: 'Server Error', error: error.message });
@@ -155,6 +310,53 @@ export const updateParcelStatus = async (req: Request, res: Response) => {
         res.json(updatedParcel);
     } catch (error: any) {
         console.error('Error updating parcel status:', error);
+        res.status(500).json({ message: 'Server Error', error: error.message });
+    }
+};
+
+// @desc    Assign real driver information when driver accepts parcel
+// @route   PUT /api/parcels/:id/assign-driver
+// @access  Public
+export const assignDriver = async (req: Request, res: Response) => {
+    try {
+        const { 
+            driverAddress, 
+            driverName, 
+            driverPhone, 
+            driverCarNumber, 
+            driverVehicle, 
+            driverRating 
+        } = req.body;
+        
+        const parcel = await Parcel.findById(req.params.id);
+        
+        if (!parcel) {
+            return res.status(404).json({ message: 'Parcel not found' });
+        }
+        
+        // Assign real driver information from registration
+        parcel.driverAddress = driverAddress;
+        parcel.driverName = driverName;
+        parcel.driverPhone = driverPhone;
+        parcel.driverCarNumber = driverCarNumber;
+        parcel.driverVehicle = driverVehicle;
+        parcel.driverRating = driverRating;
+        parcel.status = 'accepted';
+        parcel.lastUpdated = new Date();
+        
+        const updatedParcel = await parcel.save();
+        
+        console.log('Driver assigned to parcel:', {
+            id: updatedParcel._id,
+            deliveryId: updatedParcel.deliveryId,
+            driverName: updatedParcel.driverName,
+            driverPhone: updatedParcel.driverPhone,
+            driverVehicle: updatedParcel.driverVehicle
+        });
+        
+        res.json(updatedParcel);
+    } catch (error: any) {
+        console.error('Error assigning driver:', error);
         res.status(500).json({ message: 'Server Error', error: error.message });
     }
 };
@@ -237,4 +439,62 @@ export const acceptParcel = async (req: Request, res: Response) => {
         console.error('Error accepting parcel:', error);
         res.status(500).json({ message: 'Server Error', error: error.message });
     }
+};
+
+// Upload proof of delivery
+export const uploadProofOfDelivery = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No file uploaded'
+      });
+    }
+
+    // Handle both MongoDB ObjectId and string IDs
+    // Find parcel by deliveryId (primary) or _id (fallback)
+    let parcel = await Parcel.findOne({ deliveryId: id });
+    
+    // If not found by deliveryId, try by ObjectId
+    if (!parcel) {
+      try {
+        parcel = await Parcel.findById(id);
+      } catch (error) {
+        console.log('Invalid ObjectId format:', id);
+      }
+    }
+    
+    // Debug logging
+    console.log('Looking for parcel with ID:', id);
+    console.log('Found parcel:', parcel ? 'Yes' : 'No');
+    
+    if (!parcel) {
+      return res.status(404).json({
+        success: false,
+        message: 'Parcel not found'
+      });
+    }
+
+    // Update parcel with proof photo information
+    parcel.proofPhoto = req.file.filename;
+    parcel.proofUploadTime = new Date();
+    
+    // Do not change status to delivered yet - sender needs to verify
+    await parcel.save();
+
+    res.json({
+      success: true,
+      message: 'Proof of delivery uploaded successfully',
+      proofPhoto: req.file.filename,
+      proofUploadTime: parcel.proofUploadTime
+    });
+  } catch (error) {
+    console.error('Error uploading proof:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
 };

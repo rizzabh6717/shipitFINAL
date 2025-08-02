@@ -5,6 +5,10 @@ import { MapContainer, TileLayer } from 'react-leaflet';
 import { Package, MapPin, DollarSign, Calendar, Truck, ExternalLink, CheckCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import 'leaflet/dist/leaflet.css';
+import { API_ENDPOINTS } from '../config/api';
+
+// Contract configuration - should match WalletContext
+const CONTRACT_ADDRESS = "0xF95E9ADd0061Af14d4458BC35897125933E732A4";
 
 interface ParcelData {
   fromAddress: string;
@@ -16,6 +20,7 @@ interface ParcelData {
   pickupDate: string;
   pickupTime: string;
   specialInstructions: string;
+  senderPhoto?: string; // Photo uploaded by sender
 }
 
 const CreateParcel: React.FC = () => {
@@ -34,8 +39,12 @@ const CreateParcel: React.FC = () => {
     weight: 0,
     pickupDate: '',
     pickupTime: '',
-    specialInstructions: ''
+    specialInstructions: '',
+    senderPhoto: ''
   });
+  const [senderPhotoFile, setSenderPhotoFile] = useState<File | null>(null);
+  const [senderPhotoPreview, setSenderPhotoPreview] = useState<string>('');
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   const [estimatedFee, setEstimatedFee] = useState(0);
 
@@ -67,6 +76,56 @@ const CreateParcel: React.FC = () => {
 
   const handlePrevious = () => {
     if (step > 1) setStep(step - 1);
+  };
+
+  const handlePhotoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type and size
+    const validTypes = ['image/jpeg', 'image/jpg', 'image/png'];
+    if (!validTypes.includes(file.type)) {
+      alert('Please upload a valid image file (JPG, JPEG, or PNG)');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      alert('File size must be less than 5MB');
+      return;
+    }
+
+    setUploadingPhoto(true);
+    setSenderPhotoFile(file);
+
+    // Create preview
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setSenderPhotoPreview(e.target?.result as string);
+    };
+    reader.readAsDataURL(file);
+
+    // Upload to backend
+    const formData = new FormData();
+    formData.append('senderPhoto', file);
+
+    try {
+      const response = await fetch(`${API_ENDPOINTS.photos}/upload-sender-photo`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        handleInputChange('senderPhoto', data.photoUrl);
+      } else {
+        alert('Error uploading photo: ' + data.message);
+      }
+    } catch (error) {
+      console.error('Error uploading photo:', error);
+      alert('Error uploading photo. Please try again.');
+    } finally {
+      setUploadingPhoto(false);
+    }
   };
 
   const handleSubmit = async () => {
@@ -108,12 +167,13 @@ const CreateParcel: React.FC = () => {
         feeInINR: estimatedFee,
         escrowAmountInAVAX: result.escrowAmount,
         transactionHash: result.transactionHash,
-        deliveryId: result.deliveryId,
+        deliveryId: result.deliveryId, // This is crucial for linking blockchain parcels
+        escrowContractAddress: CONTRACT_ADDRESS,
         status: 'pending'
       };
 
       try {
-        const response = await fetch('http://localhost:5001/api/parcels', {
+        const response = await fetch(`${API_ENDPOINTS.parcels}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -129,7 +189,7 @@ const CreateParcel: React.FC = () => {
         }
       } catch (backendError) {
         console.warn('Backend storage failed:', backendError);
-        console.warn('Make sure backend is running on http://localhost:5001');
+        console.warn('Make sure backend is running on http://localhost:5003');
         // Don't throw here as the blockchain transaction succeeded
       }
 
@@ -329,15 +389,83 @@ const CreateParcel: React.FC = () => {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Special Instructions</label>
-                <textarea
-                  value={parcelData.specialInstructions}
-                  onChange={(e) => handleInputChange('specialInstructions', e.target.value)}
-                  placeholder="Any special handling instructions, access codes, or notes for the driver..."
-                  rows={4}
-                  className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold text-white mb-4">Additional Details</h3>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Special Instructions</label>
+                  <textarea
+                    value={parcelData.specialInstructions}
+                    onChange={(e) => handleInputChange('specialInstructions', e.target.value)}
+                    placeholder="Any special handling instructions..."
+                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    rows={3}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Parcel Photo (Optional)</label>
+                  <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-600 border-dashed rounded-lg">
+                    <div className="space-y-1 text-center">
+                      {senderPhotoPreview ? (
+                        <div className="relative">
+                          <img
+                            src={senderPhotoPreview}
+                            alt="Parcel preview"
+                            className="mx-auto h-32 w-32 object-cover rounded-lg"
+                          />
+                          <button
+                            onClick={() => {
+                              setSenderPhotoFile(null);
+                              setSenderPhotoPreview('');
+                              handleInputChange('senderPhoto', '');
+                            }}
+                            className="absolute top-0 right-0 -mt-2 -mr-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="mx-auto">
+                          <Package className="mx-auto h-12 w-12 text-gray-400" />
+                        </div>
+                      )}
+                      <div className="flex text-sm text-gray-400">
+                        <label
+                          htmlFor="sender-photo-upload"
+                          className="relative cursor-pointer bg-gray-700 rounded-md font-medium text-blue-400 hover:text-blue-300 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-offset-gray-800 focus-within:ring-blue-500 px-3 py-1"
+                        >
+                          <span>Upload a file</span>
+                          <input
+                            id="sender-photo-upload"
+                            name="sender-photo-upload"
+                            type="file"
+                            className="sr-only"
+                            accept=".jpg,.jpeg,.png"
+                            onChange={handlePhotoUpload}
+                            disabled={uploadingPhoto}
+                          />
+                        </label>
+                        <p className="pl-1">or drag and drop</p>
+                      </div>
+                      <p className="text-xs text-gray-500">PNG, JPG, JPEG up to 5MB</p>
+                    </div>
+                  </div>
+                  {uploadingPhoto && (
+                    <div className="mt-2 text-sm text-blue-400">Uploading photo...</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Map placeholder */}
+            <div className="bg-gray-700 rounded-lg h-64 flex items-center justify-center border border-gray-600">
+              <div className="text-center">
+                <MapPin className="h-12 w-12 text-gray-500 mx-auto mb-2" />
+                <p className="text-gray-400">Route will be displayed here</p>
+                <p className="text-sm text-gray-500 mt-1">Interactive map with pickup and delivery points</p>
               </div>
             </div>
           </motion.div>
@@ -495,8 +623,11 @@ const CreateParcel: React.FC = () => {
                     weight: 0,
                     pickupDate: '',
                     pickupTime: '',
-                    specialInstructions: ''
+                    specialInstructions: '',
+                    senderPhoto: ''
                   });
+                  setSenderPhotoFile(null);
+                  setSenderPhotoPreview('');
                 }}
                 className="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-200"
               >

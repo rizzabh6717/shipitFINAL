@@ -15,6 +15,16 @@ export interface IParcel extends Document {
   feeInINR: number;
   escrowAmountInAVAX: number;
   status: 'pending' | 'accepted' | 'in-transit' | 'delivered' | 'cancelled';
+  // User information fields
+  senderName?: string;
+  senderPhone?: string;
+  senderEmail?: string;
+  driverName?: string;
+  driverPhone?: string;
+  driverCarNumber?: string;
+  driverVehicle?: string;
+  driverRating?: number;
+  
   // Blockchain integration fields
   deliveryId?: string; // Smart contract delivery ID
   transactionHash?: string; // Transaction hash from blockchain
@@ -25,6 +35,9 @@ export interface IParcel extends Document {
   fundReleaseTransactionHash?: string; // Transaction hash when funds are released
   creationDate: Date;
   lastUpdated: Date;
+  proofPhoto?: string;
+  proofUploadTime?: Date;
+  senderPhoto?: string; // Photo uploaded by sender during parcel creation
 }
 
 const ParcelSchema: Schema = new Schema({
@@ -56,6 +69,19 @@ const ParcelSchema: Schema = new Schema({
   fundReleaseTransactionHash: { type: String },
   creationDate: { type: Date, default: Date.now },
   lastUpdated: { type: Date, default: Date.now },
+  proofPhoto: { type: String },
+  proofUploadTime: { type: Date },
+  senderPhoto: { type: String }, // Photo uploaded by sender during parcel creation
+  
+  // User information fields
+  senderName: { type: String },
+  senderPhone: { type: String },
+  senderEmail: { type: String },
+  driverName: { type: String },
+  driverPhone: { type: String },
+  driverCarNumber: { type: String },
+  driverVehicle: { type: String },
+  driverRating: { type: Number }
 });
 
 export default mongoose.model<IParcel>('Parcel', ParcelSchema);

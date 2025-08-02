@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useWallet } from '../contexts/WalletContext';
-import { useNavigate } from 'react-router-dom';
-import { Truck, Shield, Zap, Users } from 'lucide-react';
-
+import { Truck, Shield, Zap, Users, BarChart3 } from 'lucide-react';
 const LandingPage: React.FC = () => {
-  const { connectWallet, isConnected, setUserRole } = useWallet();
+  const { connectWallet } = useWallet();
   const [showRoleSelection, setShowRoleSelection] = useState(false);
   const navigate = useNavigate();
 
@@ -15,8 +14,9 @@ const LandingPage: React.FC = () => {
   };
 
   const handleRoleSelection = (role: 'sender' | 'driver') => {
-    setUserRole(role);
-    navigate(`/${role}`);
+    // Store selected role for later use
+    localStorage.setItem('selectedRole', role);
+    navigate("/select-role");
   };
 
   const features = [
@@ -103,6 +103,18 @@ const LandingPage: React.FC = () => {
                   </motion.div>
                 ))}
               </div>
+
+              {/* Analytics Button */}
+              <motion.button
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.5 }}
+                onClick={() => navigate('/analytics')}
+                className="flex items-center space-x-2 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl"
+              >
+                <BarChart3 className="h-5 w-5" />
+                <span>📊 View Analytics</span>
+              </motion.button>
 
               {/* CTA Button */}
               {!showRoleSelection ? (

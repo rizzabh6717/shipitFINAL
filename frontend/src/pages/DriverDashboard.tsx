@@ -1,8 +1,12 @@
 import { ethers } from 'ethers';
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { MapPin, Package, DollarSign, Clock, CheckCircle, Route, Filter, Truck, ExternalLink } from 'lucide-react';
+import { MapPin, Package, DollarSign, Clock, CheckCircle, Route, Filter, Truck, ExternalLink, Upload } from 'lucide-react';
 import { useWallet } from '../contexts/WalletContext';
+import ProofOfDeliveryUpload from '../components/ProofOfDeliveryUpload';
+import SenderPhotoViewer from '../components/SenderPhotoViewer';
+import toast from 'react-hot-toast';
+import { API_BASE_URL, API_ENDPOINTS } from '../config/api';
 
 // Interfaces defining the shape of our data
 interface AvailableParcel {
@@ -15,30 +19,29 @@ interface AvailableParcel {
   fee: number;
   distance?: number;
   pickupTime?: string;
-  sender?: {
-    name: string;
-    rating: number;
-    address: string;
-  };
+  senderName?: string;
+  senderPhone?: string;
+  senderAddress?: string;
   transactionHash?: string;
   escrowAmount?: string;
+  senderPhoto?: string;
 }
 
 interface AcceptedParcel {
   id: string;
+  _id?: string;
   deliveryId: string;
   from: string;
   to: string;
   item: string;
   fee: number;
   status: 'accepted' | 'picked-up' | 'in-transit' | 'delivered';
-  sender: {
-    name: string;
-    phone: string;
-    address: string;
-  };
+  senderName?: string;
+  senderPhone?: string;
+  senderAddress?: string;
   transactionHash?: string;
   escrowAmount?: string;
+  senderPhoto?: string;
 }
 
 // Main Driver Dashboard Component
@@ -51,13 +54,15 @@ const DriverDashboard: React.FC = () => {
   const [tripConfirmed, setTripConfirmed] = useState(false);
   const [fromLocation, setFromLocation] = useState('');
   const [toLocation, setToLocation] = useState('');
-
   const [availableParcels, setAvailableParcels] = useState<AvailableParcel[]>([]);
   const [acceptedParcels, setAcceptedParcels] = useState<AcceptedParcel[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [acceptingParcel, setAcceptingParcel] = useState<string | null>(null);
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
+  const [showProofUpload, setShowProofUpload] = useState(false);
+  const [selectedParcelForProof, setSelectedParcelForProof] = useState<AcceptedParcel | null>(null);
+  const [proofUploaded, setProofUploaded] = useState<Record<string, boolean>>({});
 
   // Function to fetch available parcels from blockchain
   const fetchAvailableParcels = async (isInitialLoad = false) => {
@@ -74,8 +79,8 @@ const DriverDashboard: React.FC = () => {
       const deliveries = await getAvailableDeliveries();
 
       // DEBUG: Check raw data
-      console.log('🔍 Raw deliveries from getAvailableDeliveries:', deliveries);
-      console.log('🔍 Number of deliveries:', deliveries.length);
+      console.log(' Raw deliveries from getAvailableDeliveries:', deliveries);
+      console.log(' Number of deliveries:', deliveries.length);
 
       // Transform blockchain data to match frontend interface
       const transformedParcels: AvailableParcel[] = deliveries
@@ -103,14 +108,14 @@ const DriverDashboard: React.FC = () => {
           return false; // Don't show if trip not confirmed
         })
         .map((delivery: any) => {
-          console.log('🔍 Transforming delivery:', delivery);
+          console.log(' Transforming delivery:', delivery);
           return {
             id: delivery.id.toString(),
             deliveryId: delivery.id.toString(),
             from: delivery.fromAddress,
             to: delivery.toAddress,
             item: delivery.itemDescription,
-            size: 'medium' as const,
+            size: (delivery.sizeTier?.toLowerCase() || 'medium') as 'small' | 'medium' | 'large',
             fee: Math.round(parseFloat(delivery.deliveryFee) * 3333),
             sender: {
               name: `${delivery.sender.slice(0, 6)}...${delivery.sender.slice(-4)}`,
@@ -124,13 +129,13 @@ const DriverDashboard: React.FC = () => {
           };
         });
 
-      console.log('🔍 Final transformedParcels:', transformedParcels);
-      console.log('🔍 Setting availableParcels with:', transformedParcels.length, 'items');
+      console.log(' Final transformedParcels:', transformedParcels);
+      console.log(' Setting availableParcels with:', transformedParcels.length, 'items');
 
       setAvailableParcels(transformedParcels);
       if (isInitialLoad) setError(null);
     } catch (err: any) {
-      console.error('🔍 Error in fetchAvailableParcels:', err);
+      console.error(' Error in fetchAvailableParcels:', err);
       if (isInitialLoad) {
         setError(err.message);
       } else {
@@ -215,7 +220,6 @@ const DriverDashboard: React.FC = () => {
 
     const intervalId = setInterval(() => {
       fetchAvailableParcels(false);
-      fetchAcceptedParcels(); // Also refresh accepted parcels
     }, 60000); // Poll every 30 seconds
 
     return () => clearInterval(intervalId);
@@ -252,11 +256,9 @@ const DriverDashboard: React.FC = () => {
         item: parcel.item,
         fee: parcel.fee,
         status: 'accepted',
-        sender: {
-          name: parcel.sender?.name || 'Unknown Sender',
-          phone: '+91 XXXXX XXXXX',
-          address: parcel.sender?.address || ''
-        },
+        senderName: parcel.senderName || 'Unknown Sender',
+        senderPhone: parcel.senderPhone || '+91 XXXXX XXXXX',
+        senderAddress: parcel.senderAddress || '',
         transactionHash: result.transactionHash,
         escrowAmount: parcel.escrowAmount
       };
@@ -266,12 +268,6 @@ const DriverDashboard: React.FC = () => {
       setAvailableParcels(prev => prev.filter(p => p.id !== parcel.id));
 
       // Refresh data from blockchain to keep in sync
-      setTimeout(() => {
-        fetchAcceptedParcels();
-      }, 2000); // Wait 2 seconds for blockchain to update
-
-      alert(`Delivery accepted successfully! Transaction: ${result.transactionHash}`);
-
     } catch (error: any) {
       console.error('Error accepting delivery:', error);
 
@@ -290,60 +286,35 @@ const DriverDashboard: React.FC = () => {
 
   // Handler for updating parcel status (pickup, transit, delivered)
   const handleUpdateStatus = async (parcel: AcceptedParcel, newStatus: 'picked-up' | 'in-transit' | 'delivered') => {
+    if (newStatus === 'delivered' && !proofUploaded[parcel.id]) {
+      setShowProofUpload(true);
+      setSelectedParcelForProof(parcel);
+      return;
+    }
+    
+    setUpdatingStatus(parcel.id);
+    
     try {
-      setUpdatingStatus(parcel.id);
-
-      // Call smart contract function based on status
       if (newStatus === 'delivered') {
-        console.log('Calling markAsDelivered on blockchain...');
         const result = await markAsDelivered(parseInt(parcel.deliveryId));
-        console.log('✅ Marked as delivered on blockchain:', result);
+        console.log(' Marked as delivered on blockchain:', result);
       } else if (newStatus === 'picked-up') {
         console.log('Calling markAsPickedUp on blockchain...');
         const result = await markAsPickedUp(parseInt(parcel.deliveryId));
-        console.log('✅ Marked as picked up on blockchain:', result);
+        console.log(' Marked as picked up on blockchain:', result);
+      } else if (newStatus === 'in-transit') {
+        console.log('Marking as in-transit...');
+        // Add in-transit logic here
       }
 
-      // Update local state immediately for better UX
-      setAcceptedParcels(prev => prev.map(p =>
-        p.id === parcel.id
-          ? { ...p, status: newStatus }
-          : p
-      ));
-
-      let message = '';
-      switch (newStatus) {
-        case 'picked-up':
-          message = 'Parcel marked as picked up on blockchain!';
-          break;
-        case 'in-transit':
-          message = 'Parcel is now in transit!';
-          break;
-        case 'delivered':
-          message = 'Parcel marked as delivered on blockchain! Sender can now release funds.';
-          break;
-      }
-
-      alert(message);
-
-    } catch (error: any) {
-      console.error('Error updating status on blockchain:', error);
-
-      let errorMessage = 'Failed to update status on blockchain. ';
-      if (error.message.includes('user rejected')) {
-        errorMessage += 'Transaction was rejected.';
-      } else {
-        errorMessage += error.message || 'Please try again.';
-      }
-
-      alert(errorMessage);
-
-      // Revert the status change on error
-      setAcceptedParcels(prev => prev.map(p =>
-        p.id === parcel.id
-          ? { ...p, status: parcel.status }
-          : p
-      ));
+      // Update local state
+      setAcceptedParcels(prev => 
+        prev.map(p => p.id === parcel.id ? { ...p, status: newStatus } : p)
+      );
+      toast.success(`Status updated to ${newStatus}`);
+    } catch (error) {
+      console.error('Error updating status:', error);
+      toast.error('Failed to update status');
     } finally {
       setUpdatingStatus(null);
     }
@@ -396,6 +367,18 @@ const DriverDashboard: React.FC = () => {
       case 'delivered': return 'text-green-400 bg-green-900/20 border-green-700';
       default: return 'text-gray-400 bg-gray-900/20 border-gray-700';
     }
+  };
+
+  // Handler for proof upload success
+  const handleProofUploadSuccess = (_proofData: { proofPhoto: string; proofUploadTime: string }) => {
+    if (selectedParcelForProof) {
+      setProofUploaded(prev => ({
+        ...prev,
+        [selectedParcelForProof.id]: true
+      }));
+    }
+    setShowProofUpload(false);
+    setSelectedParcelForProof(null);
   };
 
   // JSX for the component
@@ -570,9 +553,35 @@ const DriverDashboard: React.FC = () => {
                     </div>
                     <div className="flex items-center">
                       <Clock className="h-4 w-4 mr-3 text-gray-400" />
-                      <span>
-                        <span className="font-semibold text-gray-100">Pickup:</span> {parcel.pickupTime}
-                      </span>
+                      <SenderPhotoViewer 
+                        parcelId={parcel.deliveryId} 
+                        blockchainParcel={true} 
+                        onFetchPhoto={async (deliveryId) => {
+                          try {
+                            console.log('Fetching photo for delivery ID:', deliveryId);
+                            const response = await fetch(`${API_ENDPOINTS.photos}/parcel/${deliveryId}/sender-photo`);
+                            
+                            if (!response.ok) {
+                              console.error('API response error:', response.status, response.statusText);
+                              return null;
+                            }
+                            
+                            const data = await response.json();
+                            console.log('Photo API response:', data);
+                            
+                            // Ensure absolute URL
+                            if (data.photoUrl && !data.photoUrl.startsWith('http')) {
+                              // Convert relative path to absolute URL
+                              return `${API_BASE_URL}${data.photoUrl}`;
+                            }
+                            
+                            return data.photoUrl;
+                          } catch (error) {
+                            console.error('Error fetching sender photo:', error);
+                            return null;
+                          }
+                        }}
+                      />
                     </div>
                   </div>
 
@@ -581,18 +590,18 @@ const DriverDashboard: React.FC = () => {
                     <div className="text-xs text-gray-400 space-y-1">
                       <div>Delivery ID: #{parcel.deliveryId}</div>
                       <div>Escrow: {parcel.escrowAmount} AVAX</div>
-                      <div>Sender: {parcel.sender?.address.slice(0, 10)}...{parcel.sender?.address.slice(-6)}</div>
+                      <div>Sender: {parcel.senderAddress?.slice(0, 10)}...{parcel.senderAddress?.slice(-6)}</div>
                     </div>
                   </div>
 
                   <div className="mt-6 flex justify-between items-center">
                     <div className="flex items-center">
                       <div className="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center mr-3">
-                        <span className="text-sm font-bold text-white">{parcel.sender?.name.charAt(0)}</span>
+                        <span className="text-sm font-bold text-white">{parcel.senderName?.charAt(0)}</span>
                       </div>
                       <div>
-                        <p className="text-sm font-semibold text-white">{parcel.sender?.name}</p>
-                        <p className="text-xs text-gray-400">Rating: {parcel.sender?.rating} ★</p>
+                        <p className="text-sm font-semibold text-white">{parcel.senderName}</p>
+                        <p className="text-xs text-gray-400">{parcel.senderPhone}</p>
                       </div>
                     </div>
                     <button
@@ -684,15 +693,15 @@ const DriverDashboard: React.FC = () => {
 
                   <div className="border-t border-gray-700 pt-4">
                     <h4 className="text-md font-semibold text-white mb-2">Sender Information</h4>
-                    <p className="text-sm text-gray-300">Address: {parcel.sender.address.slice(0, 10)}...{parcel.sender.address.slice(-8)}</p>
-                    <p className="text-sm text-gray-300">Phone: {parcel.sender.phone}</p>
+                    <p className="text-sm text-gray-300">Address: {parcel.senderAddress?.slice(0, 10)}...{parcel.senderAddress?.slice(-8)}</p>
+                    <p className="text-sm text-gray-300">Phone: {parcel.senderPhone}</p>
                   </div>
 
                   {/* Action Buttons */}
                   <div className="mt-4 flex space-x-3">
                     {parcel.status === 'accepted' && (
                       <button
-                        onClick={() => handleUpdateStatus(parcel, 'picked-up')}
+                        onClick={() => handleUpdateStatus(parcel, 'in-transit')}
                         disabled={updatingStatus === parcel.id}
                         className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200 flex items-center"
                       >
@@ -704,29 +713,42 @@ const DriverDashboard: React.FC = () => {
                         ) : (
                           <>
                             <Truck className="h-4 w-4 mr-2" />
-                            Mark as Picked
+                            Mark as In-Transit
                           </>
                         )}
                       </button>
                     )}
-                    {parcel.status === 'picked-up' && (
-                      <button
-                        onClick={() => handleUpdateStatus(parcel, 'delivered')}
-                        disabled={updatingStatus === parcel.id}
-                        className="bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200 flex items-center"
-                      >
-                        {updatingStatus === parcel.id ? (
-                          <>
-                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                            Updating...
-                          </>
-                        ) : (
-                          <>
-                            <CheckCircle className="h-4 w-4 mr-2" />
-                            Parcel Delivered
-                          </>
-                        )}
-                      </button>
+                    {parcel.status === 'in-transit' && (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            setSelectedParcelForProof(parcel);
+                            setShowProofUpload(true);
+                          }}
+                          disabled={proofUploaded[parcel.id]}
+                          className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200 flex items-center"
+                        >
+                          <Upload className="h-4 w-4 mr-2" />
+                          {proofUploaded[parcel.id] ? 'Proof Uploaded' : 'Upload Proof'}
+                        </button>
+                        <button
+                          onClick={() => handleUpdateStatus(parcel, 'delivered')}
+                          disabled={updatingStatus === parcel.id || !proofUploaded[parcel.id]}
+                          className="bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200 flex items-center"
+                        >
+                          {updatingStatus === parcel.id ? (
+                            <>
+                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                              Updating...
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle className="h-4 w-4 mr-2" />
+                              Parcel Delivered
+                            </>
+                          )}
+                        </button>
+                      </div>
                     )}
                   </div>
                 </motion.div>
@@ -741,6 +763,18 @@ const DriverDashboard: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Proof of Delivery Upload Modal */}
+      {showProofUpload && selectedParcelForProof && (
+        <ProofOfDeliveryUpload
+          parcelId={selectedParcelForProof._id || selectedParcelForProof.id}
+          onUploadSuccess={handleProofUploadSuccess}
+          onCancel={() => {
+            setShowProofUpload(false);
+            setSelectedParcelForProof(null);
+          }}
+        />
+      )}
     </div>
   );
 };
